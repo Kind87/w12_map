@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一中商圈・互動足跡地圖 v2.1</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        :root {
+            --bg-color: #fbf6e6;
+            --text-color: #2c2418;
+            --accent-color: #7a6e5d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; }
+        
+        body { 
+            background-color: var(--bg-color); 
+            color: var(--text-color); 
+            overflow: hidden; 
+            position: relative;
+        }
+
+        /* 紙質紋理疊加層 */
+        body::before {
+            content: "";
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-image: url('https://www.transparenttextures.com/patterns/cream-paper.png');
+            pointer-events: none; z-index: 9999; opacity: 0.3;
+        }
+
+        #map { width: 100vw; height: 100vh; background: var(--bg-color); }
+
+        /* 標頭即時統計 */
+        .title-bar {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(251, 246, 230, 0.9); padding: 15px 25px;
+            border-radius: 8px; border: 1px solid #e0d8c3;
+            box-shadow: 0 4px 15px rgba(44,36,24,0.15);
+        }
+        .stats-badge {
+            font-size: 11px; background: #e0d8c3; padding: 2px 8px;
+            border-radius: 12px; margin-top: 5px; display: inline-block;
+            font-weight: bold; color: #5d5448;
+        }
+
+        .filter-panel {
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(251, 246, 230, 0.9); padding: 15px; border-radius: 8px;
+            border: 1px solid #e0d8c3; width: 180px;
+            box-shadow: 0 4px 15px rgba(44,36,24,0.1);
+        }
+        .filter-item { display: flex; align-items: center; margin-bottom: 8px; cursor: pointer; font-size: 14px; }
+        .color-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+
+        /* 地點面板 */
+        #detail-panel {
+            position: fixed; top: 0; right: -420px; width: 400px; height: 100vh;
+            background: var(--bg-color); z-index: 2000; padding: 50px 25px;
+            box-shadow: -5px 0 20px rgba(44,36,24,0.15);
+            transition: right 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+            overflow-y: auto;
+        }
+        #detail-panel.active { right: 0; }
+        .close-btn { position: absolute; top: 20px; right: 20px; font-size: 24px; cursor: pointer; border: none; background: none; }
+        
+        .photo-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 30px;
+        }
+        .photo-thumb {
+            width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;
+            cursor: pointer; transition: transform 0.2s; border: 1px solid #e0d8c3;
+        }
+        .photo-thumb:hover { transform: scale(1.05); }
+
+        /* 燈箱 (Lightbox) */
+        #lightbox {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(18, 15, 10, 0.96); z-index: 3000;
+            display: none; justify-content: center; align-items: center;
+            opacity: 0; transition: opacity 0.3s ease;
+        }
+        #lightbox.active { display: flex; opacity: 1; }
+        #lightbox-img { max-width: 85%; max-height: 80%; border: 3px solid #fff; transition: opacity 0.3s ease; }
+        .lb-nav { color: white; font-size: 40px; position: absolute; cursor: pointer; user-select: none; padding: 20px; z-index: 3100; }
+        .lb-prev { left: 30px; } .lb-next { right: 30px; }
+        .lb-close { top: 30px; right: 30px; font-size: 30px; }
+
+        /* 修正 Tooltip 字體 */
+        .leaflet-tooltip { font-weight: bold; border: 1px solid #e0d8c3; background: #fbf6e6; color: #2c2418; }
+    </style>
+</head>
+<body>
+
+    <div class="title-bar">
+        <h1>一中商圈互動足跡</h1>
+        <div id="stats" class="stats-badge">載入中...</div>
+    </div>
+
+    <div class="filter-panel">
+        <label class="filter-item"><input type="checkbox" checked data-cat="青春食光"> <span class="color-dot" style="background:#ff9500;"></span> 青春食光</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="文教日常"> <span class="color-dot" style="background:#007aff;"></span> 文教日常</label>
+        <label class="filter-item"><input type="checkbox" checked data-cat="巷弄潮流"> <span class="color-dot" style="background:#af52de;"></span> 巷弄潮流</label>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="detail-panel">
+        <button class="close-btn">✕</button>
+        <span id="p-tag" style="padding:4px 12px; border-radius:20px; color:#fff; font-size:12px; font-weight:bold;"></span>
+        <h2 id="p-title" style="margin: 15px 0 5px 0;"></h2>
+        <p id="p-lang" style="color:var(--accent-color); font-size:14px; margin-bottom:20px;"></p>
+        <p id="p-story" style="line-height:1.7; color:#4a3f35; font-size: 15px;"></p>
+        
+        <h4 style="margin-top:30px; font-size:14px; border-bottom:1px solid #e0d8c3; padding-bottom:5px;">現場足跡照片</h4>
+        <div class="photo-grid" id="p-photos"></div>
+    </div>
+
+    <div id="lightbox">
+        <span class="lb-nav lb-close">✕</span>
+        <span class="lb-nav lb-prev">❮</span>
+        <img id="lightbox-img" src="">
+        <span class="lb-nav lb-next">❯</span>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script>
+        const locations = [
+            { id: 1, name: "一中豐仁冰", lang: "I-Chung Feng Ren Ice", cat: "青春食光", color: "#ff9500", lat: 24.1488, lng: 120.6845, story: "這碗酸甜的酸梅冰配上蜜製大豆，是台中人吃了一輩子的「瘋人」滋味。" },
+            { id: 2, name: "上和園滷味", lang: "Shang He Yuan", cat: "青春食光", color: "#ff9500", lat: 24.1495, lng: 120.6848, story: "手裡沒提一盒冰鎮雞爪凍就像沒來過一中，這是最隨性的下午茶。" },
+            { id: 3, name: "一中豪大雞排", lang: "Hao Da Chicken", cat: "青春食光", color: "#ff9500", lat: 24.1498, lng: 120.6849, story: "比臉還大的雞排是商圈奇觀，咬下噴汁的快感就是最誠摯的歡迎。" },
+            { id: 4, name: "台中一中入德之門", lang: "Gate of Virtue", cat: "文教日常", color: "#007aff", lat: 24.1492, lng: 120.6855, story: "這不只是校門，更是無數台中男孩通往夢想的起點。" },
+            { id: 5, name: "孔廟與忠烈祠", lang: "Confucius Temple", cat: "文教日常", color: "#007aff", lat: 24.1525, lng: 120.6908, story: "轉個彎安靜無聲，壯闊紅牆是學生考前祈求心安的神聖角落。" },
+            { id: 6, name: "台體大田徑場", lang: "NTUS Stadium", cat: "文教日常", color: "#007aff", lat: 24.1510, lng: 120.6875, story: "緊鄰商圈的汗水之地，為熱鬧街區注入陽光與堅毅的氣息。" },
+            { id: 7, name: "三民路婚紗街", lang: "Wedding Street", cat: "巷弄潮流", color: "#af52de", lat: 24.1475, lng: 120.6835, story: "華麗櫥窗守護著浪漫，看著新人的笑意，空氣都變甜了。" },
+            { id: 8, name: "一中隱藏小巷", lang: "Hidden Alley", cat: "巷弄潮流", color: "#af52de", lat: 24.1502, lng: 120.6842, story: "鑽進地圖沒標示的小巷，尋找獨一無二的手作飾品或古著。" }
+        ];
+
+        const map = L.map('map', { zoomControl: false }).setView([24.1500, 120.6855], 16);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+        let markers = [];
+        let currentPhotoList = [];
+        let currentPhotoIndex = 0;
+
+        function renderMarkers() {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            const activeCats = Array.from(document.querySelectorAll('.filter-item input:checked')).map(i => i.dataset.cat);
+            
+            let visibleCount = 0;
+            locations.forEach(loc => {
+                if (activeCats.includes(loc.cat)) {
+                    visibleCount++;
+                    const m = L.circleMarker([loc.lat, loc.lng], { 
+                        radius: 10, fillColor: loc.color, color: "#fff", weight: 2, fillOpacity: 0.9 
+                    }).addTo(map);
+
+                    m.bindTooltip(loc.name, { direction: 'top', offset: [0,-5] });
+                    
+                    // 修正 Bug: 使用 setStyle 而非 CSS Transform
+                    m.on('mouseover', function() { this.setStyle({ radius: 14 }); });
+                    m.on('mouseout', function() { this.setStyle({ radius: 10 }); });
+
+                    m.on('click', (e) => {
+                        L.DomEvent.stopPropagation(e);
+                        openPanel(loc);
+                    });
+                    markers.push(m);
+                }
+            });
+            document.getElementById('stats').innerText = `目前展出：${visibleCount} 據點 / ${visibleCount * 4} 張足跡照片`;
+        }
+
+        function openPanel(loc) {
+            document.getElementById('p-tag').innerText = loc.cat;
+            document.getElementById('p-tag').style.backgroundColor = loc.color;
+            document.getElementById('p-title').innerText = loc.name;
+            document.getElementById('p-lang').innerText = loc.lang;
+            document.getElementById('p-story').innerText = loc.story;
+            
+            const grid = document.getElementById('p-photos');
+            grid.innerHTML = "";
+            currentPhotoList = [];
+            for(let i=1; i<=4; i++) {
+                const url = `https://picsum.photos/seed/${loc.id}-${i}/1200/900`;
+                currentPhotoList.push(url);
+                const img = document.createElement('img');
+                img.src = `https://picsum.photos/seed/${loc.id}-${i}/300/300`;
+                img.className = 'photo-thumb';
+                img.onclick = () => openLightbox(i-1);
+                grid.appendChild(img);
+            }
+            document.getElementById('detail-panel').classList.add('active');
+        }
+
+        const lb = document.getElementById('lightbox');
+        const lbImg = document.getElementById('lightbox-img');
+
+        function openLightbox(index) {
+            currentPhotoIndex = index;
+            lbImg.style.opacity = 0;
+            lbImg.src = currentPhotoList[currentPhotoIndex];
+            lb.style.display = 'flex';
+            setTimeout(() => {
+                lb.classList.add('active');
+                lbImg.style.opacity = 1;
+            }, 50);
+        }
+
+        function closeLightbox() {
+            lb.classList.remove('active');
+            setTimeout(() => lb.style.display = 'none', 300);
+        }
+
+        function changePhoto(dir) {
+            lbImg.style.opacity = 0;
+            setTimeout(() => {
+                currentPhotoIndex = (currentPhotoIndex + dir + currentPhotoList.length) % currentPhotoList.length;
+                lbImg.src = currentPhotoList[currentPhotoIndex];
+                lbImg.style.opacity = 1;
+            }, 200);
+        }
+
+        document.querySelector('.lb-close').onclick = closeLightbox;
+        document.querySelector('.lb-prev').onclick = (e) => { e.stopPropagation(); changePhoto(-1); };
+        document.querySelector('.lb-next').onclick = (e) => { e.stopPropagation(); changePhoto(1); };
+        lb.onclick = (e) => { if(e.target === lb) closeLightbox(); };
+        document.querySelector('.close-btn').onclick = () => document.getElementById('detail-panel').classList.remove('active');
+        
+        window.onkeydown = (e) => {
+            if (!lb.classList.contains('active')) return;
+            if (e.key === "Escape") closeLightbox();
+            if (e.key === "ArrowLeft") changePhoto(-1);
+            if (e.key === "ArrowRight") changePhoto(1);
+        };
+
+        document.querySelectorAll('.filter-item input').forEach(i => i.addEventListener('change', renderMarkers));
+        renderMarkers();
+    </script>
+</body>
+</html>
